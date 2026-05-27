@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ably Tic-Tac-Toe</title>
+    <script src="https://cdn.ably.com/lib/ably.min-1.js"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --cell-color: #1e293b;
+            --x-color: #38bdf8;
+            --o-color: #fb7185;
+            --text-white: #f8fafc;
+        }
+        body {
+            font-family: sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-white);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .status { margin-bottom: 10px; font-size: 1.2rem; font-weight: bold; }
+        .conn-status { font-size: 0.8rem; margin-bottom: 20px; color: #94a3b8; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            gap: 10px;
+        }
+        .cell {
+            width: 100px;
+            height: 100px;
+            background-color: var(--cell-color);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            cursor: pointer;
+            border-radius: 12px;
+        }
+        .cell.x { color: var(--x-color); }
+        .cell.o { color: var(--o-color); }
+        .controls { margin-top: 30px; display: flex; gap: 15px; }
+        button { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .btn-x { background-color: var(--x-color); }
+        .btn-o { background-color: var(--o-color); }
+    </style>
+</head>
+<body>
+
+    <div class="status" id="status">Pick X or O to Start</div>
+    <div class="conn-status" id="conn">Connecting to Ably...</div>
+
+    <div class="grid" id="board">
+        <div class="cell" data-index="0"></div>
+        <div class="cell" data-index="1"></div>
+        <div class="cell" data-index="2"></div>
+        <div class="cell" data-index="3"></div>
+        <div class="cell" data-index="4"></div>
+        <div class="cell" data-index="5"></div>
+        <div class="cell" data-index="6"></div>
+        <div class="cell" data-index="7"></div>
+        <div class="cell" data-index="8"></div>
+    </div>
+
+    <div class="controls">
+        <button class="btn-x" id="btnX" onclick="selectRole('X')">I am X</button>
+        <button class="btn-o" id="btnO" onclick="selectRole('O')">I am O</button>
+        <button onclick="resetGame()">Reset Board</button>
+    </div>
+
+    <audio id="startAudio" src="drama.m4a"></audio>
+
+    <script>
+        const ABLY_KEY = 'K5T2bQ.Djgwyw:c77k2pmuwmHdXITDP6iLPw1lIR4zRuULvx3ffFy_7zU';
+        const ably = new Ably.Realtime(ABLY_KEY);
+        const channel = ably.channels.get('tic-tac-toe-room');
+
+        let myRole = null;
+        let currentPlayer = 'X';
+        let gameState = ["", "", "", "", "", "", "", "", ""];
+        let gameActive = true;
+
+        const statusDisplay = document.getElementById('status');
+        const connDisplay = document.getElementById('conn');
+        const startAudio = document.getElementById('startAudio');
+
+        // Track Connection Status
+        ably.connection.on('connected', () => {
+            connDisplay.innerText = "🟢 Connected to Ably Realtime";
+            console.log("Ably Connected");
+        });
+
+        ably.connection.on('failed', () => {
+            connDisplay.innerText = "🔴 Connection Failed - Check API Key";
+        });
+
+        // Listen for moves from other players (and yourself)
+        channel.subscribe('move', (message) => {
+            console.log("Move received:", message.data);
+            const { index, symbol, nextPlayer } = message.data;
+            
+            gameState[index] = symbol;
+            const cell = document.querySelector(`[data-index="${index}"]`);
+            cell.innerText = symbol;
+            cell.classList.add(symbol.toLowerCase());
+            
+            currentPlayer = nextPlayer;
+            checkResult();
+        });
+
+        channel.subscribe('reset', () => {
+            location.reload(); // Simplest way to reset everything
+        });
+
+        function selectRole(role) {
+            myRole = role;
+            console.log("Role selected:", role);
+            startAudio.play().catch(e => console.log("Audio play blocked", e));
+            
+            statusDisplay.innerText = `You are ${myRole}. ${currentPlayer}'s turn.`;
+            document.getElementById('btnX').disabled = true;
+            document.getElementById('btnO').disabled = true;
+        }
+
+        document.querySelectorAll('.cell').forEach(cell => {
+            cell.addEventListener('click', () => {
+                const index = cell.getAttribute('data-index');
+
+                if (!myRole) {
+                    alert("Please select X or O first!");
+                    return;
+                }
+
+                if (gameState[index] !== "" || !gameActive) return;
+
+                if (myRole !== currentPlayer) {
+                    statusDisplay.innerText = "Wait for your turn!";
+                    return;
+                }
+
+                const nextPlayer = currentPlayer === 'X' ? 'O' : 'X';
+                
+                // PUBLISH THE MOVE
+                channel.publish('move', { index, symbol: myRole, nextPlayer });
+            });
+        });
+
+        function checkResult() {
+            const winPatterns = [
+                [0, 1, 2], [3, 4, 5], [6, 7, 8],
+                [0, 3, 6], [1, 4, 7], [2, 5, 8],
+                [0, 4, 8], [2, 4, 6]
+            ];
+
+            for (let condition of winPatterns) {
+                let [a, b, c] = condition;
+                if (gameState[a] && gameState[a] === gameState[b] && gameState[a] === gameState[c]) {
+                    statusDisplay.innerText = `Player ${gameState[a]} Wins!`;
+                    gameActive = false;
+                    return;
+                }
+            }
+
+            if (!gameState.includes("")) {
+                statusDisplay.innerText = "Draw!";
+                gameActive = false;
+            } else {
+                statusDisplay.innerText = (myRole === currentPlayer) ? "Your Turn" : "Waiting for opponent...";
+            }
+        }
+
+        function resetGame() {
+            channel.publish('reset', {});
+        }
+    </script>
+</body>
+</html>
